@@ -1,0 +1,23 @@
+{
+  "info": { "name": "TrackWise API", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "item": [
+    { "name": "Health", "request": { "method": "GET", "url": "{{baseUrl}}/api/health" } },
+    { "name": "Register", "request": { "method": "POST", "url": "{{baseUrl}}/api/auth/register", "body": { "mode": "raw", "raw": "{\"name\":\"Test User\",\"email\":\"test@trackwise.local\",\"password\":\"Password123!\"}" } } },
+    { "name": "Login", "request": { "method": "POST", "url": "{{baseUrl}}/api/auth/login", "body": { "mode": "raw", "raw": "{\"email\":\"admin@trackwise.local\",\"password\":\"Password123!\"}" } } },
+    { "name": "Punch In", "request": { "method": "POST", "url": "{{baseUrl}}/api/attendance/punch", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}], "body": { "mode": "raw", "raw": "{\"type\":\"in\"}" } } },
+    { "name": "Punch Out", "request": { "method": "POST", "url": "{{baseUrl}}/api/attendance/punch", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}], "body": { "mode": "raw", "raw": "{\"type\":\"out\"}" } } },
+    { "name": "Get My Attendance", "request": { "method": "GET", "url": "{{baseUrl}}/api/attendance/me", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}] } },
+    { "name": "Create Daily Report", "request": { "method": "POST", "url": "{{baseUrl}}/api/reports/daily", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}], "body": { "mode": "raw", "raw": "{\"tasksCompleted\":[\"Task 1\",\"Task 2\"],\"hoursWorked\":8,\"challenges\":\"Faced some issues with API\",\"planForTomorrow\":\"Complete remaining tasks\"}" } } },
+    { "name": "Get My Reports", "request": { "method": "GET", "url": "{{baseUrl}}/api/reports/{{userId}}", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}] } },
+    { "name": "Create Task", "request": { "method": "POST", "url": "{{baseUrl}}/api/tasks", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}], "body": { "mode": "raw", "raw": "{\"title\":\"New Task\",\"description\":\"Task description\",\"priority\":\"high\",\"status\":\"todo\"}" } } },
+    { "name": "Get Tasks", "request": { "method": "GET", "url": "{{baseUrl}}/api/tasks", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}] } },
+    { "name": "Get Employees", "request": { "method": "GET", "url": "{{baseUrl}}/api/employees", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}] } },
+    { "name": "Admin Overview", "request": { "method": "GET", "url": "{{baseUrl}}/api/admin/overview", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}] } }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "accessToken", "value": "" },
+    { "key": "userId", "value": "" }
+  ]
+}
+
