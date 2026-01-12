@@ -1,262 +1,421 @@
-import React, { useEffect, useState } from 'react'
-import { getAdminOverview } from '../services/reportService'
-import { getMyAttendance, punch as punchApi, requestLeave, setStatus as setStatusApi } from '../services/attendanceService'
-import useAuth from '../store/useAuth'
-import { decimalHoursToHrsMins } from '../utils/time'
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import {
+  Calendar,
+  CheckCircle2,
+  Clock,
+  Coffee,
+  User,
+  LayoutDashboard,
+  Timer,
+  Palmtree,
+  AlertCircle,
+  ChevronRight,
+  TrendingUp,
+  History,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  Bell
+} from 'lucide-react';
 
-export default function Dashboard(){
-  const [overview, setOverview] = useState(null)
-  const { user } = useAuth()
-  const [myToday, setMyToday] = useState(null)
-  const [statusLoading, setStatusLoading] = useState(false)
-  const [allRecords, setAllRecords] = useState([])
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
-  const [selectedStatus, setSelectedStatus] = useState('Present')
-  const [editReason, setEditReason] = useState('')
+import { getMyAttendance, setStatus } from '../services/attendanceService';
+import useAuth from '../store/useAuth';
+import { decimalHoursToHrsMins } from '../utils/time';
+import {
+  initSocket,
+  onAttendanceRefresh,
+  onDashboardUpdate,
+  isSocketConnected
+} from '../services/socket';
 
-  useEffect(() => {
-    if (user?.role === 'admin') fetchOverview()
-    else fetchMyToday()
-  }, [user])
 
-  async function fetchMyToday() {
-    try {
-      const data = await getMyAttendance()
-      setAllRecords(data || [])
-      setMyToday(data?.[0] || null)
-    } catch (e) {
-      console.error('fetch my today failed', e)
-    }
-  }
-
-  async function setStatus(status) {
-    setStatusLoading(true)
-    try {
-      // Use unified API to set status for a date
-      await setStatusApi({ status: status === 'present' ? 'Present' : status === 'leave' ? 'Leave' : 'Holiday', date: selectedDate, reason: status === 'leave' ? 'Leave' : '' })
-      await fetchMyToday()
-    } catch (e) {
-      console.error('Error setting status:', e)
-    } finally {
-      setStatusLoading(false)
-    }
-  }
-
-  async function openEditModal(defaultStatus) {
-    setSelectedStatus(defaultStatus || (myToday?.status || 'Present'))
-    setSelectedDate(new Date().toISOString().split('T')[0])
-    setEditReason('')
-    setShowEditModal(true)
-  }
-
-  async function submitEdit() {
-    setStatusLoading(true)
-    try {
-      await setStatusApi({ status: selectedStatus, date: selectedDate, reason: editReason })
-      await fetchMyToday()
-      setShowEditModal(false)
-    } catch (e) {
-      console.error('Edit failed', e)
-      alert(e.response?.data?.message || 'Failed to update status')
-    } finally {
-      setStatusLoading(false)
-    }
-  }
-
-  async function fetchOverview() {
-    try {
-      const data = await getAdminOverview()
-      setOverview(data)
-    } catch(err) {
-      console.error('Error fetching overview:', err)
-    }
-  }
-
-  if (user?.role === 'admin' && !overview) return <div className="p-6">Loading...</div>
-
-  // Calculate monthly stats for non-admin
-  const thisMonth = new Date()
-  const monthStart = new Date(thisMonth.getFullYear(), thisMonth.getMonth(), 1)
-  const presentDays = allRecords.filter(r => r.status === 'Present' && new Date(r.date) >= monthStart).length
-  const leaveDays = allRecords.filter(r => r.status === 'Leave' && new Date(r.date) >= monthStart).length
-  const holidayDays = allRecords.filter(r => r.status === 'Holiday' && new Date(r.date) >= monthStart).length
-  const totalHoursThisMonth = allRecords.filter(r => new Date(r.date) >= monthStart).reduce((sum, r) => sum + (Number(r.totalHours) || 0), 0)
+/* ---------- STATUS BADGE (Lighter Text) ---------- */
+const StatusBadge = ({ status }) => {
+  const styles = {
+    Present: 'bg-emerald-100/50 text-emerald-700 border-emerald-200/60',
+    Leave: 'bg-amber-100/50 text-amber-700 border-amber-200/60',
+    Holiday: 'bg-indigo-100/50 text-indigo-700 border-indigo-200/60',
+    Absent: 'bg-rose-100/50 text-rose-700 border-rose-200/60'
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600 mt-2">Welcome back, {user?.name || 'User'}!</p>
-        </div>
-        {user?.role !== 'admin' && (
-          <div className="text-sm text-gray-500">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </div>
-        )}
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border backdrop-blur-sm ${styles[status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${status === 'Present' ? 'bg-emerald-500 animate-pulse' : 'bg-current'}`} />
+      {status}
+    </span>
+  );
+};
+
+/* ---------- OVERVIEW CARD (Lighter Text) ---------- */
+const OverviewCard = ({ label, value, icon: Icon, color, trend }) => (
+  <div className="relative overflow-hidden bg-white group p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+    <div className="flex justify-between items-start">
+      <div className={`p-3 rounded-2xl ${color} shadow-lg shadow-current/10 transition-transform`}>
+        <Icon size={20} />
       </div>
-      
-      {user?.role !== 'admin' && (
-        <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg shadow-lg p-6 text-white">
-          <h2 className="text-lg font-semibold mb-4">Mark Today's Status</h2>
-          <div className="flex gap-3 flex-wrap">
-            <button
-              onClick={() => setStatus('present')}
-              disabled={statusLoading || myToday?.status === 'Present'}
-              className="flex-1 px-6 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed transition"
-            >
-              ✓ Present
-            </button>
-            <button
-              onClick={() => setStatus('leave')}
-              disabled={statusLoading || myToday?.status === 'Leave'}
-              className="flex-1 px-6 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed transition"
-            >
-              📋 Leave
-            </button>
-            <button
-              onClick={() => setStatus('holiday')}
-              disabled={statusLoading || myToday?.status === 'Holiday'}
-              className="flex-1 px-6 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed transition"
-            >
-              🎉 Holiday
-            </button>
-          </div>
-        </div>
-      )}
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {user?.role === 'admin' && overview ? (
-          <>
-            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-600">
-              <div className="text-gray-600 text-sm">Present Today</div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{overview.present}</div>
-              <div className="text-xs text-gray-500 mt-1">out of {overview.totalEmployees}</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-600">
-              <div className="text-gray-600 text-sm">Absent Today</div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{overview.absent}</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-600">
-              <div className="text-gray-600 text-sm">Avg Hours</div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{overview.avgHours}</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow border-l-4 border-purple-600">
-              <div className="text-gray-600 text-sm">Pending Tasks</div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{overview.pendingTasks}</div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-600 hover:shadow-lg transition">
-              <div className="text-gray-600 text-sm font-medium">Today's Status</div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-3xl font-bold text-gray-900 mt-3">{myToday ? myToday.status : '—'}</div>
-                    <div className="text-xs text-gray-500 mt-2">Current attendance</div>
-                  </div>
-                  <div>
-                    <button onClick={() => openEditModal(myToday?.status)} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Edit</button>
-                  </div>
-                </div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-green-600 hover:shadow-lg transition">
-              <div className="text-gray-600 text-sm font-medium">Today's Hours</div>
-              <div className="text-3xl font-bold text-gray-900 mt-3">{myToday ? decimalHoursToHrsMins(myToday.totalHours) : '0h 00m'}</div>
-              <div className="text-xs text-gray-500 mt-2">Hours worked</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-purple-600 hover:shadow-lg transition">
-              <div className="text-gray-600 text-sm font-medium">This Month</div>
-              <div className="text-3xl font-bold text-gray-900 mt-3">{presentDays}</div>
-              <div className="text-xs text-gray-500 mt-2">Days present</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-orange-600 hover:shadow-lg transition">
-              <div className="text-gray-600 text-sm font-medium">Monthly Total</div>
-              <div className="text-3xl font-bold text-gray-900 mt-3">{decimalHoursToHrsMins(totalHoursThisMonth)}</div>
-              <div className="text-xs text-gray-500 mt-2">Total hours</div>
-            </div>
-          </>
-        )}
-      </div>
-      
-      {user?.role !== 'admin' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Monthly Summary</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between items-center border-b pb-2">
-                <span className="text-gray-600">Present Days</span>
-                <span className="font-bold text-green-600">{presentDays}</span>
-              </div>
-              <div className="flex justify-between items-center border-b pb-2">
-                <span className="text-gray-600">Leave Days</span>
-                <span className="font-bold text-blue-600">{leaveDays}</span>
-              </div>
-              <div className="flex justify-between items-center border-b pb-2">
-                <span className="text-gray-600">Holiday Days</span>
-                <span className="font-bold text-orange-600">{holidayDays}</span>
-              </div>
-              <div className="flex justify-between items-center pt-2">
-                <span className="text-gray-700 font-medium">Total Hours</span>
-                <span className="font-bold text-gray-900">{decimalHoursToHrsMins(totalHoursThisMonth)}</span>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Recent Days</h3>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {allRecords.slice(0, 7).map(record => (
-                <div key={record._id} className="flex justify-between items-center text-sm border-b pb-2">
-                  <span className="text-gray-600">{new Date(record.date).toLocaleDateString()}</span>
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                      record.status === 'Present' ? 'bg-green-100 text-green-700' :
-                      record.status === 'Leave' ? 'bg-blue-100 text-blue-700' :
-                      record.status === 'Holiday' ? 'bg-orange-100 text-orange-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>{record.status}</span>
-                    <span className="text-gray-900 font-medium">{decimalHoursToHrsMins(record.totalHours)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Edit Modal */}
-      {showEditModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit Attendance Status</h3>
-            <label className="block text-sm text-gray-700 mb-2">Date</label>
-            <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="w-full mb-3 p-2 border rounded" />
-
-            <label className="block text-sm text-gray-700 mb-2">Status</label>
-            <select value={selectedStatus} onChange={e => setSelectedStatus(e.target.value)} className="w-full p-2 border rounded mb-3">
-              <option value="Present">Present</option>
-              <option value="Leave">Leave</option>
-              <option value="Holiday">Holiday</option>
-              <option value="Absent">Absent</option>
-            </select>
-
-            <label className="block text-sm text-gray-700 mb-2">Reason (optional)</label>
-            <input value={editReason} onChange={e => setEditReason(e.target.value)} className="w-full mb-4 p-2 border rounded" />
-
-            {(() => {
-              const rec = allRecords.find(r => new Date(r.date).toISOString().slice(0,10) === selectedDate)
-              const finalized = rec && rec.punches && rec.punches.length >= 2
-              if (finalized && selectedStatus === 'Present') return (<div className="text-sm text-red-600 mb-3">This day has completed punches — cannot change to Present.</div>)
-              return null
-            })()}
-
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setShowEditModal(false)} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
-              <button onClick={submitEdit} disabled={statusLoading || (allRecords.find(r => new Date(r.date).toISOString().slice(0,10) === selectedDate)?.punches?.length >= 2 && selectedStatus === 'Present')} className="px-4 py-2 bg-blue-600 text-white rounded">{statusLoading ? 'Saving...' : 'Save'}</button>
-            </div>
-          </div>
+      {trend && (
+        <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400 bg-slate-50 px-2 py-1 rounded-lg">
+          {trend}
         </div>
       )}
     </div>
-  )
+    <div className="mt-5">
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</p>
+      <h3 className="text-2xl font-semibold text-slate-800 mt-1 tracking-tight">{value}</h3>
+    </div>
+    <div className="absolute -bottom-4 -right-4 w-20 h-20 bg-slate-50 rounded-full opacity-50 group-hover:scale-150 transition-transform duration-500" />
+  </div>
+);
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const socketInitRef = useRef(false);
+  const notificationTimerRef = useRef(null);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const loadData = useCallback(async () => {
+    try {
+      const data = await getMyAttendance();
+      setRecords(data || []);
+    } catch (error) {
+      console.error("Failed to load attendance", error);
+      addNotification('Failed to load data', 'error');
+    }
+  }, []);
+
+  // Initialize Socket.IO on mount
+  useEffect(() => {
+    if (!socketInitRef.current && user?.id) {
+      socketInitRef.current = true;
+      const socket = initSocket(user.id);
+      setSocketConnected(socket?.connected || false);
+
+      // Check connection status periodically
+      const checkConnection = setInterval(() => {
+        setSocketConnected(isSocketConnected());
+      }, 1000);
+
+      return () => clearInterval(checkConnection);
+    }
+  }, [user?.id]);
+
+  // Listen for real-time attendance updates
+  useEffect(() => {
+    const unsubAttendance = onAttendanceRefresh((data) => {
+      console.log('📡 Real-time attendance update:', data);
+      addNotification(`Status updated to ${data.status}`, 'success');
+      loadData();
+    });
+
+    const unsubDashboard = onDashboardUpdate((data) => {
+      console.log('📡 Dashboard sync:', data);
+      loadData();
+    });
+
+    return () => {
+      unsubAttendance?.();
+      unsubDashboard?.();
+    };
+  }, [loadData]);
+
+
+
+  // Initial load
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      await loadData();
+      setLoading(false);
+    };
+    init();
+  }, [loadData]);
+
+  const addNotification = (message, type = 'info') => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, message, type }]);
+    
+    clearTimeout(notificationTimerRef.current);
+    notificationTimerRef.current = setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 4000);
+  };
+
+  const todayRecord = useMemo(
+    () => records.find(r => r.date.startsWith(todayStr)),
+    [records, todayStr]
+  );
+
+  const monthlyStats = useMemo(() => {
+    const start = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const monthly = records.filter(r => new Date(r.date) >= start);
+    return {
+      present: monthly.filter(r => r.status === 'Present').length,
+      hours: monthly.reduce((t, r) => t + (r.totalHours || 0), 0)
+    };
+  }, [records]);
+
+  const updateStatus = async status => {
+    setUpdating(true);
+    await setStatus({ status, date: todayStr });
+    await loadData();
+    setUpdating(false);
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
+  };
+
+  if (loading) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 space-y-4">
+        <div className="w-12 h-12 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
+        <p className="text-slate-400 font-medium animate-pulse">Syncing your workspace...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#FBFBFE] pb-20">
+      {/* NOTIFICATIONS CONTAINER */}
+      <div className="fixed top-4 right-4 z-50 space-y-3 pointer-events-none">
+        {notifications.map(notif => (
+          <div
+            key={notif.id}
+            className={`pointer-events-auto animate-slide-in px-5 py-3 rounded-xl flex items-center gap-3 text-sm font-medium shadow-lg backdrop-blur border
+              ${notif.type === 'success' 
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                : notif.type === 'error' 
+                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                : 'bg-blue-50 text-blue-700 border-blue-200'
+              }`}
+          >
+            {notif.type === 'success' && <CheckCircle2 size={16} />}
+            {notif.type === 'error' && <AlertCircle size={16} />}
+            {notif.type === 'info' && <Bell size={16} />}
+            {notif.message}
+          </div>
+        ))}
+      </div>
+
+      <div className="max-w-7xl mx-auto px-6 pt-10 space-y-10">
+
+        {/* HEADER WITH SOCKET STATUS */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-blue-600 font-semibold text-[10px] uppercase tracking-[0.2em]">
+              <LayoutDashboard size={14} />
+              <span>Management Portal</span>
+            </div>
+            <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">
+              {getGreeting()}, <span className="text-slate-700">{user?.name?.split(' ')[0]}</span>
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-100">
+            {/* Socket Status Indicator */}
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              socketConnected 
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}>
+              {socketConnected ? (
+                <>
+                  <Wifi size={12} />
+                  <span>Live</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff size={12} />
+                  <span>Offline</span>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100/50">
+              <Calendar size={16} className="text-slate-400" />
+              <span className="text-sm font-semibold text-slate-600">
+                {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+            </div>
+            <div className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center shadow-lg shadow-slate-200">
+              <User size={18} />
+            </div>
+          </div>
+        </header>
+
+        {/* OVERVIEW GRID WITH ENHANCED STATS */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <OverviewCard
+            label="Current Status"
+            value={todayRecord?.status || 'Unmarked'}
+            icon={CheckCircle2}
+            color="bg-emerald-50 text-emerald-600"
+            trend="Today"
+          />
+          <OverviewCard
+            label="Today Work Hours"
+            value={decimalHoursToHrsMins(todayRecord?.totalHours || 0)}
+            icon={Clock}
+            color="bg-blue-50 text-blue-600"
+            trend="Today"
+          />
+          <OverviewCard
+            label="This Month Attendance"
+            value={`${monthlyStats.present} Days`}
+            icon={TrendingUp}
+            color="bg-violet-50 text-violet-600"
+            trend="This Month"
+          />
+          <OverviewCard
+            label="Monthly Work Hours"
+            value={decimalHoursToHrsMins(monthlyStats.hours)}
+            icon={Clock}
+            color="bg-orange-50 text-orange-600"
+            trend="This Month"
+          />
+        </section>
+
+
+
+        {/* MAIN INTERFACE */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+          {/* QUICK ACTIONS WITH ENHANCED FEEDBACK */}
+          <div className="lg:col-span-4 bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm space-y-8">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800 flex items-center gap-3">
+                <Timer size={20} className="text-blue-600" />
+                Punch Center
+              </h3>
+              <p className="text-xs text-slate-400 font-medium mt-1">Set your availability for the team.</p>
+            </div>
+
+            <div className="space-y-3">
+              {[
+                { label: 'Present', icon: CheckCircle2, sub: 'Mark as on-duty', activeClass: 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-emerald-100' },
+                { label: 'Leave', icon: Palmtree, sub: 'Request time off', activeClass: 'border-amber-500 bg-amber-50 text-amber-700 shadow-amber-100' },
+                { label: 'Holiday', icon: Coffee, sub: 'Public rest day', activeClass: 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-indigo-100' }
+              ].map(btn => {
+                const isActive = todayRecord?.status === btn.label;
+                return (
+                  <button
+                    key={btn.label}
+                    disabled={updating || isActive}
+                    onClick={() => updateStatus(btn.label)}
+                    className={`w-full group flex items-center justify-between p-4 rounded-2xl border-2 transition-all duration-300 disabled:opacity-50 
+                      ${isActive ? `${btn.activeClass} shadow-md` : 'border-slate-50 bg-slate-50/50 text-slate-600 hover:border-slate-200 hover:bg-white'}`}
+                  >
+                    <div className="flex items-center gap-4 text-left">
+                      <div className={`p-2.5 rounded-xl ${isActive ? 'bg-white shadow-sm text-current' : 'bg-white'}`}>
+                        <btn.icon size={20} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold leading-none">{btn.label}</p>
+                        <p className="text-[10px] font-medium opacity-60 mt-1">{btn.sub}</p>
+                      </div>
+                    </div>
+                    {isActive ? (
+                       <div className="flex items-center gap-1">
+                        <div className="bg-current w-1.5 h-1.5 rounded-full" />
+                        <div className="bg-current w-1.5 h-1.5 rounded-full opacity-60 animate-pulse" />
+                       </div>
+                    ) : (
+                      <ChevronRight size={16} className="opacity-0 group-hover:opacity-100 -translate-x-1 group-hover:translate-x-0 transition-all" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Connection status in punch center */}
+            <div className={`p-3 rounded-xl text-xs font-medium flex items-center gap-2 ${
+              socketConnected
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}>
+              {socketConnected ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Real-time sync active
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={14} />
+                  Running in offline mode
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* HISTORY LOG (ENHANCED) */}
+          <div className="lg:col-span-8 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+            <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
+              <h3 className="text-lg font-semibold text-slate-800 flex items-center gap-3">
+                <History size={20} className="text-blue-600" />
+                Attendance Log
+                {socketConnected && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
+              </h3>
+              <button
+                onClick={() => loadData()}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Reload logs"
+              >
+                <RefreshCw size={16} className="text-slate-400" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-x-auto">
+              {records.length ? (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-slate-400 text-[10px] uppercase tracking-[0.2em] font-bold border-b border-slate-50">
+                      <th className="px-8 py-4">Timeline</th>
+                      <th className="px-8 py-4">Status Label</th>
+                      <th className="px-8 py-4 text-right">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {records.slice(0, 7).map((r, idx) => (
+                      <tr key={r._id} className="group hover:bg-slate-50/50 transition-colors animate-fade-in" style={{ animationDelay: `${idx * 50}ms` }}>
+                        <td className="px-8 py-5">
+                          <div className="flex flex-col">
+                            <span className="font-medium text-slate-700 text-sm">
+                                {new Date(r.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">
+                                {new Date(r.date).toLocaleDateString('en-US', { weekday: 'long' })}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <StatusBadge status={r.status} />
+                        </td>
+                        <td className="px-8 py-5 text-right font-mono text-xs font-medium text-slate-500">
+                          {decimalHoursToHrsMins(r.totalHours)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center py-20 text-slate-300">
+                  <AlertCircle size={48} className="opacity-20 mb-4" />
+                  <p className="font-medium text-slate-400">No logs found.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }
